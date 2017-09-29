@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 )
 
@@ -121,8 +122,18 @@ func main() {
 	initTransformer()
 
 	listen := fmt.Sprintf("%s:%d", config.Listen, config.Port)
+	listenPProf := fmt.Sprintf("%s:%d", "127.0.0.1", 6060)
 
-	http.HandleFunc("/metrics", auth(handlerMetricPost))
-	http.HandleFunc("/events", auth(handlerEventPost))
-	log.Fatal(http.ListenAndServe(listen, nil))
+
+	// Pprof server.
+	go func() {
+		log.Fatal(http.ListenAndServe(listenPProf, nil))
+	}()
+
+	// Application server.
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/metrics", auth(handlerMetricPost))
+	mux.HandleFunc("/events", auth(handlerEventPost))
+	log.Fatal(http.ListenAndServe(listen, mux))
 }
