@@ -5,14 +5,19 @@ import (
 	"fmt"
 	"github.com/BurntSushi/toml"
 	"github.com/yanc0/greedee/plugins"
+	"github.com/yanc0/greedee/transformer"
 	"io/ioutil"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 )
 
 var metricPluginList []plugins.MetricPlugin
 var eventPluginList []plugins.EventPlugin
+var storePlugin plugins.StorePlugin
+var transform *transformer.Transformer
+
 var config Config
 
 type BasicAuth struct {
@@ -27,6 +32,7 @@ type Config struct {
 	GraphitePlugin *plugins.GraphitePluginConfig `toml:"graphite_plugin"`
 	ConsolePlugin  *plugins.ConsolePluginConfig  `toml:"console_plugin"`
 	MySQLPlugin    *plugins.MySQLPluginConfig    `toml:"mysql_plugin"`
+	MemStorePlugin *plugins.MemStorePluginConfig `toml:"memstore_plugin"`
 }
 
 func loadConfig(configPath string) {
@@ -69,6 +75,12 @@ func loadPlugins(config *Config) {
 	} else {
 		log.Println("[INFO]", len(metricPluginList)+len(eventPluginList), "Plugins loaded")
 	}
+
+	//Store Plugin
+	if storePlugin == nil {
+		storePlugin = plugins.NewMemStorePlugin(*config.MemStorePlugin)
+		log.Println("[INFO] Memstore plugin loaded")
+	}
 }
 
 func initPlugins() {
@@ -94,6 +106,10 @@ func initPlugins() {
 
 }
 
+func initTransformer() {
+	transform = transformer.NewTransformer("/etc", storePlugin)
+}
+
 func main() {
 	configPath := flag.String("config",
 		"/etc/greedee/config.toml",
@@ -103,10 +119,21 @@ func main() {
 	loadConfig(*configPath)
 	loadPlugins(&config)
 	initPlugins()
+	initTransformer()
 
 	listen := fmt.Sprintf("%s:%d", config.Listen, config.Port)
+	listenPProf := fmt.Sprintf("%s:%d", "127.0.0.1", 6060)
 
-	http.HandleFunc("/metrics", auth(handlerMetricPost))
-	http.HandleFunc("/events", auth(handlerEventPost))
-	log.Fatal(http.ListenAndServe(listen, nil))
+
+	// Pprof server.
+	go func() {
+		log.Fatal(http.ListenAndServe(listenPProf, nil))
+	}()
+
+	// Application server.
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/metrics", auth(handlerMetricPost))
+	mux.HandleFunc("/events", auth(handlerEventPost))
+	log.Fatal(http.ListenAndServe(listen, mux))
 }
